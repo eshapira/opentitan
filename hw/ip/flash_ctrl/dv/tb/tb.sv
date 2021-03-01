@@ -22,7 +22,6 @@ module tb;
   wire intr_rd_full;
   wire intr_rd_lvl;
   wire intr_op_done;
-  wire intr_op_error;
   wire [NUM_MAX_INTERRUPTS-1:0] interrupts;
 
   // interfaces
@@ -31,6 +30,8 @@ module tb;
   pins_if #(1) devmode_if(devmode);
   tl_if tl_if(.clk(clk), .rst_n(rst_n));
   tl_if eflash_tl_if(.clk(clk), .rst_n(rst_n));
+
+  `DV_ALERT_IF_CONNECT
 
   // dut
   flash_ctrl_wrapper dut (
@@ -43,7 +44,8 @@ module tb;
     .flash_ctrl_tl_o    (tl_if.d2h),
 
     .flash_power_ready_h_i (1'b1  ),
-    .flash_power_down_h_i  (1'b0  ),
+    .flash_power_down_h_i  (flash_power_down_h  ),
+    .flash_bist_enable_i   (lc_ctrl_pkg::Off),
 
     .eflash_tl_i        (eflash_tl_if.h2d),
     .eflash_tl_o        (eflash_tl_if.d2h),
@@ -68,33 +70,69 @@ module tb;
     .intr_rd_full_o     (intr_rd_full   ),
     .intr_rd_lvl_o      (intr_rd_lvl    ),
     .intr_op_done_o     (intr_op_done   ),
-    .intr_op_error_o    (intr_op_error  )
+    .alert_rx_i         (alert_rx       ),
+    .alert_tx_o         (alert_tx       )
   );
 
-  // bind mem_bkdr_if
+  // -----------------------------------
+  // Create edge in flash_power_down_h_i
+  //   eshapira - 30-Dec-20 
+  logic init;
+  assign flash_power_down_h = (init ? 1'b1 : 1'b0); 
+  initial begin
+    init = 1'b1;
+    #(1us);
+    init = 1'b0;
+  end
+
+
+  // -----------------------------------
+  //
+  
   `define FLASH_DATA_MEM_HIER(i) \
       dut.u_flash_eflash.u_flash.gen_generic.u_impl_generic.gen_prim_flash_banks[``i``].u_prim_flash_bank.u_mem
-
-  `define FLASH_INFO_MEM_HIER(i) \
-      dut.u_flash_eflash.u_flash.gen_generic.u_impl_generic.gen_prim_flash_banks[``i``].u_prim_flash_bank.gen_info_types[0].u_info_mem
-
+  `define FLASH_INFO_MEM_HIER(i, j) \
+        dut.u_flash_eflash.u_flash.gen_generic.u_impl_generic.gen_prim_flash_banks[``i``].u_prim_flash_bank.gen_info_types[``j``].u_info_mem
+  
+  
   for (genvar i = 0; i < flash_ctrl_pkg::NumBanks; i++) begin : gen_mem_bkdr_if_i
-    bind `FLASH_DATA_MEM_HIER(i) mem_bkdr_if mem_bkdr_if();
-    bind `FLASH_INFO_MEM_HIER(i) mem_bkdr_if mem_bkdr_if();
-    initial begin
-      flash_part_e part;
-      part = flash_ctrl_pkg::FlashPartData;
-      uvm_config_db#(mem_bkdr_vif)::set(null, "*.env", $sformatf("mem_bkdr_vifs[%0s][%0d]",
-          part.name(), i), `FLASH_DATA_MEM_HIER(i).mem_bkdr_if);
 
-      part = flash_ctrl_pkg::FlashPartInfo;
-      uvm_config_db#(mem_bkdr_vif)::set(null, "*.env", $sformatf("mem_bkdr_vifs[%0s][%0d]",
-          part.name(), i), `FLASH_INFO_MEM_HIER(i).mem_bkdr_if);
+    if(`PRIM_DEFAULT_IMPL==prim_pkg::ImplGeneric) begin // If using open-source flash
+    
+      flash_dv_part_e part = part.first();
+      
+      bind `FLASH_DATA_MEM_HIER(i) mem_bkdr_if mem_bkdr_if();
+      for(genvar j = 0; j < flash_ctrl_pkg::InfoTypes; j++)
+        bind `FLASH_INFO_MEM_HIER(i, j) mem_bkdr_if mem_bkdr_if();
+       
+      initial begin
+ 
+        uvm_config_db#(mem_bkdr_vif)::set(null, "*.env", $sformatf("mem_bkdr_vifs[%0s][%0d]",
+            part.name(), i), `FLASH_DATA_MEM_HIER(i).mem_bkdr_if);
+        part = part.next();
+        uvm_config_db#(mem_bkdr_vif)::set(null, "*.env", $sformatf("mem_bkdr_vifs[%0s][%0d]",
+              part.name(), i), `FLASH_INFO_MEM_HIER(i, 0).mem_bkdr_if);
+        part = part.next();
+        uvm_config_db#(mem_bkdr_vif)::set(null, "*.env", $sformatf("mem_bkdr_vifs[%0s][%0d]",
+              part.name(), i), `FLASH_INFO_MEM_HIER(i, 1).mem_bkdr_if);
+        part = part.next();
+        uvm_config_db#(mem_bkdr_vif)::set(null, "*.env", $sformatf("mem_bkdr_vifs[%0s][%0d]",
+              part.name(), i), `FLASH_INFO_MEM_HIER(i, 2).mem_bkdr_if);
+        
+      end
+
     end
+      
   end : gen_mem_bkdr_if_i
+
+
+
 
   `undef FLASH_DATA_MEM_HIER
   `undef FLASH_INFO_MEM_HIER
+
+  // -----------------------------------
+
 
   // Connect the interrupts
   assign interrupts[FlashCtrlIntrProgEmpty] = intr_prog_empty;
@@ -102,7 +140,6 @@ module tb;
   assign interrupts[FlashCtrlIntrRdFull]    = intr_rd_full;
   assign interrupts[FlashCtrlIntrRdLvl]     = intr_rd_lvl;
   assign interrupts[FlashCtrlIntrOpDone]    = intr_op_done;
-  assign interrupts[FlashCtrlIntrOpError]   = intr_op_error;
 
   initial begin
     // drive clk and rst_n from clk_if

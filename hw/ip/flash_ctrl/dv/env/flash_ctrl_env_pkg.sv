@@ -20,7 +20,8 @@ package flash_ctrl_env_pkg;
   `include "dv_macros.svh"
 
   // parameters
-
+  parameter string LIST_OF_ALERTS[] = {"recov_err", "recov_mp_err", "recov_ecc_err"};
+  parameter uint NUM_ALERTS = 3;
   parameter uint FlashNumPages            = flash_ctrl_pkg::NumBanks * flash_ctrl_pkg::PagesPerBank;
   parameter uint FlashSizeBytes           = FlashNumPages * flash_ctrl_pkg::WordsPerPage *
                                             flash_ctrl_pkg::DataWidth / 8;
@@ -50,8 +51,7 @@ package flash_ctrl_env_pkg;
     FlashCtrlIntrRdFull     = 2,
     FlashCtrlIntrRdLvl      = 3,
     FlashCtrlIntrOpDone     = 4,
-    FlashCtrlIntrOpError    = 5,
-    NumFlashCtrlIntr        = 6
+    NumFlashCtrlIntr        = 5
   } flash_ctrl_intr_e;
 
   typedef enum {
@@ -61,6 +61,14 @@ package flash_ctrl_env_pkg;
     FlashMemInitRandomize,  // Initialize with random data.
     FlashMemInitInvalidate  // Initialize with Xs.
   } flash_mem_init_e;
+  
+  // Partition select for DV
+  typedef enum logic [flash_ctrl_pkg::InfoTypes:0] { // Data partition and all info partitions
+    FlashPartData  = 0,
+    FlashPartInfo  = 1,
+    FlashPartInfo1 = 2,
+    FlashPartRed   = 4
+  } flash_dv_part_e;
 
   typedef struct packed {
     bit           en;         // enable this region
@@ -73,7 +81,7 @@ package flash_ctrl_env_pkg;
   } flash_mp_region_cfg_t;
 
   typedef struct packed {
-    flash_part_e    partition;  // data or info partition
+    flash_dv_part_e partition;  // data or one of the info partitions
     flash_erase_e   erase_type; // erase page or the whole bank
     flash_op_e      op;         // read / program or erase
     uint            num_words;  // number of words to read or program (TL_DW)
